@@ -1,0 +1,580 @@
+;---------------------------  
+; Reading ORCA netcdf files
+; EG 24/2/99
+;---------------------------  
+FUNCTION nc_read, file_name, var_name, ncdf_db,  TIME_1 = time_1,  TIME_2 =  time_2, ALL_DATA = all_data, NO_MEAN = no_mean
+
+; arguments = file_name, varname
+; ncdf_db=<location>:<path> or just <path>
+; mot clef = iodir time_1 time_2
+
+@common
+@com_eg
+
+;;   print,  'key_yreverse : ', key_yreverse  
+
+; inits
+   IF debug_w THEN print, ' '
+   IF debug_w THEN print, '  ENTER nc_read'
+
+   IF NOT keyword_set(TIME_1) THEN time_1 =  1
+   IF NOT keyword_set(TIME_2) THEN time_2 =  time_1
+;
+; decide which subdomain of data to read
+;
+
+   IF debug_w THEN print, '     keyword_set(ALL_DATA) : ', keyword_set(ALL_DATA) 
+
+   IF keyword_set(ALL_DATA) THEN BEGIN
+      print, '    Reading whole domain'
+      firstx = 0
+      firsty = 0
+      firstz = 0
+      nx = jpi
+      ny = jpj
+      nz = jpk
+      lastx = jpi-1
+      lasty = jpj-1
+      lastz = jpk-1
+;Rajout MK
+;Trouver une meilleure place
+      ixminmesh = 0
+      iyminmesh = 0
+      ixmaxmesh = jpi-1
+      iymaxmesh = jpj-1
+;Fin rajout
+   ENDIF ELSE BEGIN
+      grille,mask,glam,gphi,gdep,nx,ny,nz,firstx,firsty,firstz,lastx,lasty,lastz
+      mask = 1
+   ENDELSE
+
+   IF debug_w THEN print, '     nx,ny,nz,firstx,firsty,firstz,lastx,lasty,lastz'
+   IF debug_w THEN print, '     ', nx,ny,nz,firstx,firsty,firstz,lastx,lasty,lastz
+
+   IF debug_w THEN print,  '     key_offset =', key_offset
+   IF debug_w THEN print,  '     jpi, jpj, jpk =',  jpi, jpj, jpk
+
+
+; define reading boundaries
+
+   x_count = nx
+   y_count = ny
+   z_count = nz
+
+   IF debug_w THEN print,  '     nx,ny,nz =', nx,ny,nz 
+
+; force izmaxmesh to lastz
+   jpk = lastz+1
+
+; dealing with longitude periodicity
+   IF x_count NE jpi THEN BEGIN
+      key_shift_read = 0
+   ENDIF ELSE key_shift_read = key_shift
+   IF debug_w THEN print,  '     key_shift_read=', key_shift_read
+
+   x_offset = key_offset[0]+ firstx+(key_shift_read-key_shift)
+   y_offset = key_offset[1]+ firsty
+   z_offset = key_offset[2]+ firstz
+   IF debug_w THEN print,  '     offset =', x_offset, y_offset, z_offset
+
+; pour trouver un fichier, tu as
+; findfile (tres pratique) et dialog_pickfile (interactif)
+
+; pour verifier si il y a une variable je fais
+
+; inq=ncdf_inquire(cdfid)
+; for varid=0,inq.nvars-1 do BEGIN
+;    varinq=ncdf_varinq(cdfid,varid) 
+;    if varinq.name eq nom then goto, variabletrouvee
+; endfor
+; return, -1
+; variabletrouvee:
+
+; local directory
+
+   IF strpos(ncdf_db, ':') GE 1 THEN directory = (str_sep(ncdf_db, ':'))[1] $
+    ELSE directory = ncdf_db
+
+; existence of file
+
+   list = findfile(directory+file_name, count = nb_file)
+   
+   IF nb_file EQ 0 THEN BEGIN
+      print, ''
+      print, '   ***** file ', file_name, ' not found in ', $
+       directory
+      print, ''
+      field = {data: -1.0}
+      return,  field
+   ENDIF 
+
+; ouverture fichier netCDF + contenu
+   cdfid=ncdf_open(directory+file_name) 
+   inq=ncdf_inquire(cdfid)
+; que contient la variable
+   varid = ncdf_varid(cdfid, var_name)
+
+   name_suff = ''
+
+   IF varid EQ -1 THEN BEGIN
+      print, ''
+      print, '   ***** field ', var_name, ' not found in file ', $
+       file_name
+      print, ''
+      field = {data: -1.0}
+      return,  field
+   ENDIF 
+   varinq=ncdf_varinq(cdfid, var_name)
+
+; test sur la dimension
+   err_mess = ''
+   field_dim = n_elements(varinq.dim)
+
+; get unlimited record variable
+   IF inq.recdim NE -1 THEN BEGIN
+      ncdf_diminq, cdfid,  inq.recdim,  name_time, nb_time
+      ;;ncdf_varget, cdfid, inq.recdim, time_array
+      ;;nb_time = (size(time_array))(1)
+   ENDIF ELSE BEGIN
+      ; Look for a potential record dimension 
+      IF debug_w THEN print, '    Warning : no unlimited record in netCDF file'
+      ; Look for the names of all dimensions and all variables
+      list_dims = ncdf_listdims(cdfid)
+      list_vars = ncdf_listvars(cdfid)
+      ; Propose all the names and make the user choose the right one
+      ; for the record dimension
+      print, 'In the file ',  file_name,  ', the dimensions are named :'
+      print, list_dims
+      print, 'In the file ',  file_name,  ', the variables are named :'
+      print, list_vars
+      name_time = xquestion('Among the preceding names, which one could refer to the record dimension ?',  /chkwid)
+      IF name_time NE '-' THEN BEGIN
+         dimidt = ncdf_dimid(cdfid, name_time)
+         ncdf_diminq, cdfid,  dimidt,  name_time, nb_time
+         print, 'You chose ', name_time,  ' as a record dimension and its size is ',  nb_time
+         inq.recdim = dimidt
+      ENDIF ELSE BEGIN
+         print, 'No record dimension considered in the file'
+         nb_time =  0
+      ENDELSE
+
+      IF varinq.dim[varinq.ndims-1] NE dimidt THEN STOP,  $
+       'Post_it cannot handle variables whose record dimension is not the last one'
+
+;      ncdf_diminq,cdfid,(n_elements(varinq.dim)-1), name_time, nb_time     
+;      dimidl = ncdf_dimid(cdfid, name_time)
+;      ncdf_diminq,cdfid,dimidl, name_time, nb_time
+;      varidl = ncdf_varid(cdfid, name_time)
+;      ncdf_varget, cdfid, varidl, time_array
+
+   ENDELSE 
+
+   IF jpt GT nb_time THEN BEGIN 
+      jpt =  nb_time
+      print, 'Warning : the specified jpt does not correspond to the real time dimension in the file !'
+      print, 'New jpt =',  jpt
+   ENDIF
+   ; defs for @read_ncdf_varget
+
+;   key_stride = time_stride
+   key_stride = 1
+   if n_elements(key_stride) LE 2 then key_stride = [1, 1, 1]
+   key_stride = 1l > long(key_stride)
+   jpitotal = long(ixmaxmesh-ixminmesh+1)
+   key_shift = long(testvar(var = key_shift))
+   
+   key = long(key_shift MOD jpitotal)
+   if key LT 0 then key = key+jpitotal
+   ixmin = ixminmesh-ixmindta
+   iymin = iyminmesh-iymindta
+   firsttps = time_1-1
+   lasttps = time_2-1
+
+   name = varid
+
+   IF debug_w THEN print, '     '
+   IF debug_w THEN print, '     key=', key 
+   IF debug_w THEN print, '     jpitotal=', jpitotal
+   IF debug_w THEN print, '     ixmindta,iymindta,izmindta  =', ixmindta,iymindta,izmindta
+   IF debug_w THEN print, '     ixminmesh,iyminmesh=', ixminmesh,iyminmesh
+   IF debug_w THEN print, '     ixmaxmesh,iymaxmesh=', ixmaxmesh,iymaxmesh 
+   IF debug_w THEN print, '     izminmesh,izmaxmesh=', izminmesh,izmaxmesh 
+   IF debug_w THEN print, '     ixmin,iymin=', ixmin,iymin 
+   IF debug_w THEN print, '     firsttps,lasttps=', firsttps, lasttps
+   IF debug_w THEN print, '     key_shift in nc_read=', key_shift
+   IF debug_w THEN print, '     key_yreverse, firsty, lasty',key_yreverse, firsty, lasty
+   IF debug_w THEN print, '     '
+
+   CASE n_elements(varinq.dim) OF
+
+      ;; fichier 2d : surface
+      2: BEGIN
+         print, '    Reading ', var_name, ' (2D data)   from ', file_name
+         @read_ncdf_varget
+         lec_data = res
+         data_direc = 'xy'
+         niveau = 1
+         END 
+
+      ;; fichier 3d : 2 cas = 1/ 2d espace + temps 2/ 3d espace
+      3: BEGIN 
+         ;; si varinq.dim contient la dim infinie (no 3) -> temps
+         dim_3 = '3d'
+         IF nb_time GE 1 THEN dim_3 = '2d'
+         IF dim_3 EQ '2d' THEN BEGIN 
+         
+            IF time_2 EQ time_1 THEN BEGIN 
+               print, '    Reading ', var_name, ' (2D data - index ', strcompress(string(time_1)),') from ', file_name
+               @read_ncdf_varget
+               lec_data = res
+               data_direc = 'xy'
+            ENDIF ELSE BEGIN 
+               print, '    Reading ', var_name, ' (2D data time serie)', strcompress(string(time_1)),'-', strtrim(string(time_2), 2), ' [every ',strtrim(string(time_stride), 2), ']   from ', file_name
+               IF debug_w THEN print,  '     x_offset et y_offset et time_1 :',  x_offset,  y_offset,  time_1
+               @read_ncdf_varget
+               lec_data = res
+               data_direc = 'xyt' 
+            ENDELSE 
+
+         ENDIF ELSE BEGIN 
+            print, '    Reading ', var_name, ' (3D data)', '   from ', file_name
+            @read_ncdf_varget
+            lec_data = res
+            data_direc = 'xyz'
+         ENDELSE
+      END 
+      ;; fichier 4d : volume + temps
+      4: BEGIN
+         IF time_2 EQ time_1 THEN BEGIN 
+            print, '    Reading ', var_name, ' (3D data - index ', strcompress(string(time_1)),') from ', file_name
+            ; read vertical levels
+            IF debug_w THEN print, '   mesh_type= ',mesh_type 
+            IF mesh_type EQ 'atm' THEN BEGIN
+               ncdf_diminq,cdfid,2, name_level, nb_level
+               IF debug_w THEN print, 'name_level, nb_level = ', name_level, nb_level
+
+               dimidl = ncdf_dimid(cdfid, name_level)
+               ncdf_diminq,cdfid,dimidl, name_level, nb_level
+
+               varidl = ncdf_varid(cdfid, name_level)
+               ; make sure name_level is in hPa
+               ncdf_attget, cdfid, varidl, 'units', val_unit
+               IF string(val_unit) NE 'hPa' AND string(val_unit) NE 'millibar'  AND string(val_unit) NE 'mbar' THEN BEGIN 
+                  print, '  vertical levels coordinate not obvious = ', name_level
+                  print, '  ... using <levels> ...'
+                  varidl = ncdf_varid(cdfid, 'levels')
+               ENDIF 
+ 
+               ncdf_varget, cdfid, varidl, gdept 
+               gdept = gdept
+               gdepw = gdept
+               e3t = shift(gdept, 1)-gdept
+               e3t[0] = e3t[1]
+               e3w = e3t
+               jpk = nb_level
+               tmask = reform((reform(tmask(*, *), jpi*jpj)#replicate(1, jpk)), jpi, jpj, jpk)
+            ENDIF 
+            IF debug_w THEN print,  ' going into @read_ncdf_varget ' 
+            @read_ncdf_varget
+            lec_data = res
+;            lec_data =  reform(lec_data,x_count, y_count, z_count) 
+            data_direc = 'xyz'
+            IF debug_w THEN help, lec_data
+
+;           vertical average ?
+            IF vert_switch ge 1 AND NOT keyword_set(no_mean) THEN BEGIN 
+               old_boite = [lon1, lon2, lat1, lat2, prof1, prof2]
+               print, '      Average in vertical domain ', vert_type, vert_mean
+               IF mesh_type EQ 'atm' THEN BEGIN
+                  CASE atmos_msk OF 
+                     0: print, '          [atmos grid : take all points] ' ; take all points
+                     1: BEGIN
+                        ; take ocean points only
+                        idx = where(tmask EQ 0)
+                        lec_data(idx) = 1.e20
+                        print, '          [atmos grid : take ocean points only] '
+                     END
+                     2: BEGIN
+                        ; take land points only
+                        idx = where(tmask GT 0)
+                        lec_data(idx) = 1.e20
+                        print, '          [atmos grid : take land points only] '
+                     END
+                  ENDCASE 
+                  CASE vert_type OF
+                     'z': BEGIN ;  depth range
+                        IF debug_w THEN print, ' performing average'
+                        zmean = grossemoyenne(lec_data, 'z', boite = vert_mean)
+                        IF vert_mean[0] EQ vert_mean[1] THEN BEGIN
+                           name_suff = ' at '+strtrim(string(long(gdept(vert_mean(0)))), 2)+' hPa'
+                        ENDIF ELSE BEGIN
+                           name_suff = ' averaged in '+vert_type+'['+strtrim(string(long(vert_mean(0))), 2)+','+strtrim(string(long(vert_mean(1))), 2)+']'
+                        ENDELSE 
+                     END 
+                     ELSE: BEGIN ; levels range
+                        IF vert_mean[0] EQ vert_mean[1] THEN BEGIN
+                           zmean = lec_data(*, *, vert_mean[0])
+                           name_suff = ' at '+strtrim(string(long(gdept(vert_mean(0)))), 2)+' hPa'
+                        ENDIF ELSE BEGIN
+                           zmean = moyenne(lec_data, 'z', boite = vert_mean, /zindex, NAN =1.e20)
+                           name_suff = ' averaged in '+vert_type+'['+strtrim(string(long(vert_mean(0))), 2)+','+strtrim(string(long(vert_mean(1))), 2)+']'
+                        ENDELSE 
+                     END 
+                  ENDCASE 
+;                  tmask = reform(tmask(*, *, 0), jpi, jpj)
+               ENDIF ELSE BEGIN
+                  ; ocean = always mask
+;                  idx = where(tmask EQ 0)
+;                  lec_data(idx) = 1.e20
+                  CASE vert_type OF
+                     'z': BEGIN
+                        IF vert_mean[0] EQ vert_mean[1] THEN BEGIN
+                           zmean = lec_data ; right depth already selected
+                           name_suff = ' at '+strtrim(string(long(gdept(vert_mean(0))+.1)), 2)+' m'
+                        ENDIF ELSE BEGIN
+                           zmean = moyenne(lec_data, 'z', boite = vert_mean)
+                           name_suff = ' averaged in '+vert_type+'['+strtrim(string(long(vert_mean(0))), 2)+','+strtrim(string(long(vert_mean(1))), 2)+']'
+                        ENDELSE 
+                     END 
+                     ELSE: BEGIN ; case level (zindex)
+                        IF vert_mean[0] EQ vert_mean[1] THEN BEGIN
+                           zmean = lec_data ; right depth already selected
+                           name_suff = ' at '+strtrim(string(long(gdept(vert_mean(0))+.1)), 2)+' m'
+                        ENDIF ELSE BEGIN
+                           zmean = moyenne(lec_data, 'z', boite = vert_mean, /zindex)
+                           name_suff = ' averaged in '+vert_type+'['+strtrim(string(long(vert_mean(0))), 2)+','+strtrim(string(long(vert_mean(1))), 2)+']'
+                        ENDELSE 
+                     END 
+                  ENDCASE 
+               ENDELSE 
+               lec_data = zmean
+               domdef, old_boite
+               field_dim = field_dim - 1
+               data_direc = 'xy'
+               nzt = 1
+               firstz = 0
+               lastz = 0
+            ENDIF 
+
+         ENDIF ELSE BEGIN 
+            print, '    Reading ', var_name, ' (3D data time serie)',  strcompress(string(time_1)),'-', strtrim(string(time_2), 2), '   from ', file_name
+            ; read vertical levels
+            IF mesh_type EQ 'atm' THEN BEGIN
+               ncdf_diminq,cdfid,2, name_level, nb_level
+
+               ; get name of vertical level from metadata
+               file_grid_config = hom_def+'grid_config.def'
+               spawn, 'grep -i "\ '+meshlec_type+' " '+file_grid_config, line
+               line = strcompress(strtrim(line[0], 2)) 
+               length = strlen(line)
+   
+               IF length EQ 0 THEN BEGIN
+                  print, '    *** nc_read : define name_level from grid ', meshlec_type, $
+                   ' in file ', file_grid_config
+                  name_level = ''
+                  return, -1
+               ENDIF ELSE BEGIN 
+                  argvar = str_sep(line, ' ') 
+                  name_level = argvar[1]
+               ENDELSE
+               dimidl = ncdf_dimid(cdfid, name_level)
+               ncdf_diminq,cdfid,dimidl, name_level, nb_level
+
+               varidl = ncdf_varid(cdfid, name_level)
+               ; make sure name_level is in hPa
+               ncdf_attget, cdfid, varidl, 'units', val_unit
+               IF string(val_unit) NE 'hPa' AND string(val_unit) NE 'millibar' AND string(val_unit) NE 'mbar' THEN BEGIN 
+                  print, '  vertical levels coordinate not obvious'
+                  print, '  ... using <levels> ...'
+                  varidl = ncdf_varid(cdfid, 'levels')
+               ENDIF 
+               ncdf_varget, cdfid, varidl, gdept 
+               gdepw = gdept
+               e3t = shift(gdept, 1)-gdept
+               e3t[0] = e3t[1]
+               e3w = e3t
+               jpk = nb_level
+               tmask = reform((reform(tmask(*, *), jpi*jpj)#replicate(1, jpk)), jpi, jpj, jpk)
+            ENDIF 
+            @read_ncdf_varget
+            lec_data = res
+            data_direc = 'xyzt'
+
+;           vertical average ?
+            IF vert_switch ge 1  AND NOT keyword_set(no_mean) THEN BEGIN 
+               old_boite = [lon1, lon2, lat1, lat2, prof1, prof2]
+               print, '      Average in vertical domain ', vert_type, vert_mean
+               IF mesh_type EQ 'atm' THEN BEGIN
+                  CASE atmos_msk OF 
+                     0: print, '          [take all points] ' ; take all points
+                     1: BEGIN
+                        ; take ocean points only
+                        idx = where(tmask EQ 0)
+                        lec_data(idx) = 1.e20
+                        print, '          [take ocean points only] '
+                     END
+                     2: BEGIN
+                        ; take land points only
+                        idx = where(tmask GT 0)
+                        lec_data(idx) = 1.e20
+                        print, '          [take land points only] '
+                     END
+                  ENDCASE 
+                  CASE vert_type OF
+                     'z': BEGIN ; levels
+                        
+                        IF vert_mean[0] EQ vert_mean[1] THEN BEGIN
+                           name_suff = ' at '+strtrim(string(long(gdept(vert_mean(0)))), 2)+' hPa'
+                        ENDIF ELSE BEGIN
+                           zmean = grossemoyenne(lec_data, 'z', boite = vert_mean)
+                           name_suff = ' averaged in '+vert_type+'['+strtrim(string(vert_mean(0)), 2)+','+strtrim(string(vert_mean(1)), 2)+']'
+                        ENDELSE 
+                     END 
+                     ELSE: BEGIN ; levels
+                        IF vert_mean[0] EQ vert_mean[1] THEN BEGIN
+                           zmean = lec_data(*, *, vert_mean[0])
+                           name_suff = ' at '+vert_type+' '+strtrim(string(long(vert_mean(0))), 2)+' ['+strtrim(string(gdept(vert_mean(0))), 2)+' hPa]'
+                        ENDIF ELSE BEGIN
+                           zmean = moyenne(lec_data, 'z', boite = vert_mean, /zindex)
+                           name_suff = ' averaged in '+vert_type+'['+strtrim(string(long(vert_mean(0))), 2)+','+strtrim(string(long(vert_mean(1))), 2)+']'
+                        ENDELSE 
+                     END 
+                  ENDCASE 
+;                  tmask = reform(tmask(*, *, 0), jpi, jpj)
+               ENDIF ELSE BEGIN
+                  ; ocean = always mask
+                  ; idx = where(tmask EQ 0)
+                  ; lec_data(idx) = 1.e20
+                  CASE vert_type OF
+                     'z': BEGIN
+                        IF vert_mean[0] EQ vert_mean[1] THEN BEGIN
+                           zmean = lec_data
+                           name_suff = ' at '+strtrim(string(long(gdept(vert_mean(0))+.1)), 2)+' m'
+                        ENDIF ELSE BEGIN
+                           zmean = grossemoyenne(lec_data, 'z', boite = vert_mean)
+                           name_suff = ' averaged in '+vert_type+'['+strtrim(string(long(vert_mean(0))), 2)+','+strtrim(string(long(vert_mean(1))), 2)+']'
+                        ENDELSE 
+                     END 
+                     ELSE: BEGIN
+                        IF vert_mean[0] EQ vert_mean[1] THEN BEGIN
+                           zmean = lec_data
+                           name_suff = ' at '+strtrim(string(long(gdept(vert_mean(0))+.1)), 2)+' m'
+                        ENDIF ELSE BEGIN
+                           zmean = moyenne(lec_data, 'z', boite = vert_mean, /zindex, NAN =1.e20)
+                           name_suff = ' averaged in '+vert_type+'['+strtrim(string(long(vert_mean(0))), 2)+','+strtrim(string(long(vert_mean(1))), 2)+']'
+                        ENDELSE 
+                     END 
+                  ENDCASE 
+               ENDELSE 
+               lec_data = zmean
+               domdef, old_boite
+               field_dim = field_dim - 1
+               data_direc = 'xyt'
+               nzt = 1
+               firstz = 0
+               lastz = 0
+            ENDIF 
+         ENDELSE 
+      END 
+     ;; erreur si dim > 4
+      ELSE: BEGIN
+         err_mess =  '  *** nc_read : ERROR dimension > 4'
+         lec_data = -1.0
+      END
+   ENDCASE 
+
+; scaling ?
+   FOR i = 0, varinq.natts-1 DO BEGIN
+      att_txt = ncdf_attname(cdfid, varid, i)
+      IF att_txt EQ 'scale_factor' THEN BEGIN
+         ncdf_attget, cdfid, varid, att_txt, valscale
+         lec_data = lec_data*valscale
+      ENDIF 
+   ENDFOR 
+
+; Attribut du champ
+
+   field = {name: '', data: lec_data, legend: '', units: '', origin: '', dim: 0, direc: data_direc}
+   field.name = var_name
+   field.origin = directory+file_name
+;
+; get long name 
+;   result = '???'
+   FOR i = 0, varinq.natts-1 DO BEGIN
+      att_txt = ncdf_attname(cdfid, varid, i)
+      IF att_txt EQ 'long_name' OR att_txt EQ 'title' THEN ncdf_attget, cdfid, varid, att_txt, result
+   ENDFOR 
+   field.legend = strtrim(string(result),1)+name_suff
+
+; get unit
+; if it exists
+  isunits = ncdf_attinq(cdfid,  varid,  'units')
+  IF isunits.datatype NE 'UNKNOWN' THEN BEGIN
+     ncdf_attget, cdfid, varid, 'units', result
+     field.units = strtrim(string(result),1)
+  ENDIF ELSE BEGIN
+     print,  'No units for the variable ',  field.name
+     print,  ' Or units were forgotten in the file !'
+  ENDELSE
+  field.dim = field_dim 
+
+
+;  get valmask (might need valmask = float(string(valmask))
+
+   valmask = 1.e20
+   FOR i = 0, varinq.natts-1 DO BEGIN
+      att_txt = ncdf_attname(cdfid, varid, i)
+      IF att_txt EQ 'missing_value' OR att_txt EQ 'mask value' OR att_txt EQ '_FillValue' THEN ncdf_attget, cdfid, varid, att_txt, valmask
+   ENDFOR 
+
+; set valmask to 1.e20
+
+; ensure valmask is positive
+
+   IF valmask LT 0 THEN BEGIN
+      print, '      *** Warning valmask is negative - changing sign: ', valmask
+      idx_t = where (field.data EQ valmask)
+      IF idx_t(0) NE -1 THEN field.data(idx_t) = -valmask
+      valmask = -valmask
+      idx_t=0 ; free memory
+   ENDIF
+
+; if pseudo 3d mask, read mask file and set masked points to valmask
+
+; to do
+
+; min/max
+
+   chardim = ' - dim = '
+   FOR i = 1, (size(field.data))[0] DO BEGIN 
+      chardim = chardim+string((size(field.data))[i], format = '(I5)')
+   ENDFOR  
+
+   index_test = (where (field.data NE valmask))
+   IF index_test(0) NE -1 THEN BEGIN 
+      minf = min(field.data(where (field.data NE valmask)))
+      maxf = max(field.data(where (field.data NE valmask)))
+   ENDIF ELSE BEGIN 
+      minf =  min(field.data)
+      maxf =  max(field.data)
+   ENDELSE 
+
+   print, '      = ',field.legend, '    [min/max = ',minf , maxf,'  ', field.units,' - masked values = ',valmask, chardim, ']'
+
+
+   ncdf_close, cdfid
+
+;key_offset = key_offset_orig
+;jpi = jpi_orig
+;jpj = jpj_orig
+;jpk = jpk_orig
+
+   IF keyword_set(key_yreverse) THEN print, '    key_yreverse active : ',  key_yreverse
+
+   IF debug_w THEN print,  '  ...EXIT nc_read'
+   IF debug_w THEN print,  '  '
+
+   return, field
+
+
+END 

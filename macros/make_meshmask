@@ -1,0 +1,35 @@
+ openw,numlec,'meshmask',/get_lun, /f77_unformatted
+
+ writeu,numlec,jpiglo,jpjglo,jpkglo
+
+ writeu,numlec,'glamt',glamt
+  writeu,numlec,'glamu',glamu
+  writeu,numlec,'glamv',glamv
+ writeu,numlec,'glamf',glamf
+ writeu,numlec,'gphit',gphit
+ writeu,numlec,'gphiu',gphiu
+ writeu,numlec,'gphiv',gphiv
+ writeu,numlec,'gphif',gphif
+ writeu,numlec,'e1t  ',e1t
+ writeu,numlec,'e1u  ',e1u
+ writeu,numlec,'e1v  ',e1v
+ writeu,numlec,'e1f  ',e1f
+  writeu,numlec,'e2t  ',e2t
+  writeu,numlec,'e2u  ',e2u
+  writeu,numlec,'e2v  ',e2v
+ writeu,numlec,'e2f  ',e2f‰
+ writeu,numlec,'tmask',tmask
+  umask=umask()
+ vmask=vmask()
+ fmask=fmask()
+ writeu,numlec,'umask',umask
+ writeu,numlec,'vmask',vmask
+ writeu,numlec,'fmask',fmask
+ writeu,numlec,'blank'
+ writeu,numlec,'gdept',gdept
+  writeu,numlec,'gdepw',gdepw
+ writeu,numlec,'e3t  ',e3t
+  writeu,numlec,'e3w  ',e3w
+  free_lun,numlec
+   close, numlec
+                                                                           

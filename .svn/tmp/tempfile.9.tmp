@@ -1,0 +1,491 @@
+;---------------------------  
+; Reading Data
+;---------------------------  
+FUNCTION data_read, cmd, hotyp, plttyp, dimplot, iover, ALL_DATA = all_data, _extra = ex
+
+@common
+@com_eg
+ 
+
+; same data as previous read ?
+
+   IF debug_w THEN print, '   '
+   IF debug_w THEN print, '   ENTER data_read...'
+   IF debug_w THEN print, '       cmd at top of data_read = ', cmd
+
+   read = 1
+
+   IF cmd.var EQ cmd_prev.var AND cmd.grid EQ cmd_prev.grid AND cmd.plt EQ cmd_prev.plt AND cmd.timave EQ cmd_prev.timave AND cmd.date1 EQ cmd_prev.date1 THEN BEGIN 
+      IF hotyp NE '-' THEN BEGIN 
+                                ; time serie
+         IF cmd.spec EQ cmd_prev.spec THEN BEGIN 
+            fldr = field 
+            read = 0
+         ENDIF ELSE read = 1
+         
+      ENDIF ELSE BEGIN 
+         read = 1
+         IF strpos(cmd.plt, '#') NE -1 THEN BEGIN
+            IF  cmd.plt EQ cmd_prev.plt THEN BEGIN ; not same zoom
+               fldr = field 
+               read = 0
+            ENDIF ELSE begin
+               read = 1
+            ENDELSE
+         ENDIF 
+      ENDELSE 
+   ENDIF ELSE read = 1
+   
+   read = 1
+   
+IF read EQ 1 THEN BEGIN 
+
+   cmd_prev = cmd
+
+; difference from cmd.exp ? division from exp ?
+
+   diff_from_exp = 0
+   div_from_exp =  0
+
+   IF strpos(cmd.exp, '-') NE -1 THEN BEGIN
+      argvar = strsplit(cmd.exp,'-', /EXTRACT)
+   ENDIF ELSE IF strpos(cmd.exp, '/') NE -1 THEN BEGIN
+      argvar = strsplit(cmd.exp,'/', /EXTRACT)
+   ENDIF ELSE argvar =  cmd.exp
+      
+   IF n_elements(argvar) EQ 2 THEN BEGIN
+      IF strpos(cmd.exp, '-') NE -1 THEN BEGIN
+         diff_from_exp = 1
+         exp_init = cmd.exp
+         cmd.exp = argvar[0]
+      ENDIF
+      IF strpos(cmd.exp, '/') NE -1 THEN BEGIN
+         div_from_exp = 1
+         exp_init = cmd.exp
+         cmd.exp = argvar[0]
+      ENDIF      
+   ENDIF 
+;   varexp = cmd.exp   
+
+; define data base
+  
+   ncdf_db = def_dbase(cmd.exp)
+
+   IF debug_w THEN print, '       varexp defined in data_read = ', varexp
+
+; define file name
+
+   def_file_name, cmd, ncdf_db, file_name, delta_t1
+
+; get file if remote
+
+   get_file, file_name, ncdf_db
+
+; read grid from file if require (@<grid> option) 
+
+   IF read_grid_from_file EQ 1 THEN BEGIN 
+      mesh_from_file, cmd.grid, file_name, ncdf_db, cmd.var
+      key_shift_map = key_shift
+      file_name2 = file_name
+      ncdf_db2 = ncdf_db
+   ENDIF 
+
+; define horizontal domain and vertical domain if needed (used in
+; read_ncdf and update_data)
+
+   box_plot = def_box(cmd.plt, dimplot, legbox, time_stride)
+   CASE n_elements(box_plot) OF
+      4 : IF vert_switch GE 1 THEN box_plot = [box_plot, vert_mean]
+      6 : IF vert_switch GE 1 THEN box_plot = [box_plot[0:3],  vert_mean] ELSE box_plot = box_plot[0:3]
+   ENDCASE
+; Exceptions : need to read all the vertical data (and not a subset)
+; for the pltz case. Other cases ?   
+   IF plttyp EQ 'pltz' THEN box_plot = box_plot[0:3]
+
+; define timetsteps time1 and time2
+
+   IF hotyp NE '-' THEN BEGIN
+      time1 = delta_t1+1
+      timearr = compute_time(cmd.timave, cmd.date1, cmd.spec)
+      time2 =  timearr.count+delta_t1
+      time = timearr.scale
+<<<<<<< .mine
+      niveau = 1
+      IF debug_w THEN print, '    Data_read, hotyp/jpt = ', hotyp, jpt
+      IF debug_w THEN print, '    Data_read, box = ', box_plot[0:3]
+   ENDIF ELSE BEGIN             ; single date
+      jpt = 1
+      CASE strmid(cmd.timave, strlen(cmd.timave)-1, 1) OF
+         'y': time1 = delta_t1+1
+         'm': BEGIN
+            CASE strmid(cmd.timave, strlen(cmd.timave)-2, 1) OF
+               'm': time1 = delta_t1+long(strmid(cmd.date1, 0, 2))  ; mean month
+               ELSE: time1 = delta_t1+1
+            ENDCASE 
+            END 
+         'd': time1 = delta_t1+1
+         ELSE: time1 = delta_t1+1
+      ENDCASE 
+=======
+   ENDIF ELSE BEGIN
+      IF strpos(cmd.timave, 'mm') NE -1 THEN time1 = delta_t1+long(strmid(cmd.date1, 0, 2)) $
+      ELSE  time1 = delta_t1+1
+>>>>>>> .r88
+      time2 = time1
+      time = time1
+   ENDELSE
+
+; save time in common fld_att
+
+   time1_r = time1
+   time2_r = time2
+
+; call specific read routine
+
+   CASE STRMID(cmd.var, 0, 2) OF
+      '@@': BEGIN
+         IF debug_w THEN print,  'keyword_set(all_data) : ', keyword_set(all_data)
+         fldr = macro_read(file_name, cmd.var, ncdf_db, BOXZOOM = box_plot, TIME_1 = time1,  TIME_2 =  time2, ALL_DATA = all_data, _extra = ex)
+         IF stddev_diff EQ 1 THEN fldr.origin =  'diff'
+      END 
+      ELSE: BEGIN
+         CASE plttyp OF
+            'yfx': BEGIN        ; scatter plot y=f(x)
+               idx = strpos(cmd.var, '=f(')
+               var1 = strmid(cmd.var, 0, idx)
+               fldr1 = nc_read(file_name, var1, ncdf_db, BOXZOOM = box_plot, $
+                               TIME_1 = time1,  TIME_2 =  time2, ALL_DATA = all_data, _extra = ex)
+               file_name1 = file_name
+               ncdf_db1 = ncdf_db
+               CASE cmd.grid OF 
+                  'U': vargrid1 = 'U'
+                  'V': vargrid1 = 'V'
+                  ELSE: vargrid1 = 'T'
+               ENDCASE 
+               IF strpos(cmd.var, '=f(next)') EQ -1 THEN BEGIN  ; type 1 y=f(x) on 1 line
+                  var2 = strmid(cmd.var, idx+3, strlen(cmd.var)-idx-4)
+                  fldr2 = nc_read(file_name, var2, ncdf_db, BOXZOOM = box_plot, $
+                                  TIME_1 = time1,  TIME_2 =  time2, ALL_DATA = all_data, _extra = ex)
+                  datyp2 = datyp
+                  cmd2 = cmd
+                  sw_diffg = 0
+                  vargrid2 = vargrid1
+               ENDIF ELSE  BEGIN  ; type 2 y=f(next) on 2 lines
+                  cmd2 = decode_cmd(cmdline_main, idx_main+1)
+                  cmd2.timave = cmd.timave
+                  cmd2.date1 = cmd.date1
+                  cmd2.spec = cmd.spec
+                  datyp2 = def_dptyp(cmd2)
+                  cmd2_back = cmd2
+                  ; other grid ?
+                  grid2_test = cmd2.grid
+                  sw_diffg = 0
+                  IF grid2_test NE cmd.grid THEN BEGIN 
+                     sw_diffg = 1
+                     jptb =  jpt
+                     IF debug_w THEN print, '    (in data_read) cmd2.grid <> cmd.grid ', cmd2.grid, cmd.grid
+                     IF debug_w THEN print, '    exec def_grid, cmd2_back in data_read : '
+                     grid2_full = cmd2_back.grid
+                     def_grid, cmd2_back
+                     jpt = jptb
+                  ENDIF 
+                  fldr2 = data_read(cmd2, datyp2.hotyp, datyp2.plttyp, '1', '0', ALL_DATA = all_data, _extra = ex)
+                  var2 = cmd2.var
+                  print,  '   Variable 2 ',  var2,  ' read on vargrid ',  vargrid
+                  jptb =  jpt
+                  if debug_w THEN print, '   yfx grids different ? / sw_diffg = ', sw_diffg
+                  IF sw_diffg EQ 1 THEN BEGIN
+                     IF debug_w THEN print, '   exec def_grid, cmd1_back in data_read : '
+                     grid1_full = cmd1_back.grid
+                     def_grid, cmd1_back
+                     IF read_grid_from_file EQ 1 THEN BEGIN 
+                        mesh_from_file, cmd1_back.grid, file_name1, ncdf_db1, cmd1_back.var
+                        key_shift_map = key_shift
+                     ENDIF 
+                  ENDIF
+                  jpt = jptb
+                  CASE cmd2.grid OF 
+                     'U': vargrid2 = 'U'
+                     'V': vargrid2 = 'V'
+                     ELSE: vargrid2 = 'T'
+                  ENDCASE
+               ENDELSE  
+                                ; consistency check
+               IF fldr1.dim NE fldr2.dim THEN BEGIN
+                  print, '  *** dimension inconsistency in y=f(x) : ', cmd.var
+                  return, -1
+               ENDIF 
+                                ; custom stucture for scatter plot
+               fldr = {name: var1, data: fldr1.data, legend: fldr1.legend, $
+                       units:  fldr1.units, origin: fldr1.origin, dim: fldr1.dim, $
+                       name2: var2, data2: fldr2.data, legend2: fldr2.legend, $
+                       units2:  fldr2.units, origin2: fldr2.origin, dim2: fldr2.dim}
+                                ; diff not possible yet
+               IF diff_from_exp EQ 1 OR STRMID(cmd.spec, 0, 2) EQ 'd:' THEN BEGIN
+                  diff_from_exp = 0
+                  cmd.spec = '-'
+                  print, '   data_read : difference in scatter plot not ready'
+               ENDIF 
+                                ; re-organise cmd.var
+               cmd.var = var1
+               cmd.var2 = var2
+               
+            END  
+            ELSE: BEGIN
+               IF vecplot EQ 1 THEN BEGIN ; vectors case
+                  idx = strpos(cmd.var, ',')
+                  var1 = strmid(cmd.var, 1, idx-1)
+                  var2 = strmid(cmd.var, idx+1, strlen(cmd.var)-idx-2)
+;                  print, var1, var2
+;old version                  file_nam = strmid(file_name, 0, strlen(file_name)-4)
+                  file_nam = strmid(base_file_name+base_suffix, 0, strlen(base_file_name+base_suffix)-1)
+                  vargrid = strmid(cmd.grid, 0, 1)
+                  CASE STRMID(var1, 0, 2) OF
+                     '@@': fldr1 = macro_read(file_name, var1, ncdf_db, TIME_1 = time1,  TIME_2 =  time2, _extra = ex)
+                     ELSE: fldr1 = nc_read(file_nam+strmid(cmd.grid, 0, 1)+suff_domain+'.nc', var1, ncdf_db, $
+                                             TIME_1 = time1,  TIME_2 =  time2, ALL_DATA = all_data, _extra = ex)
+                  ENDCASE 
+                  vargrid = strmid(cmd.grid, 1, 1)
+                  CASE STRMID(var2, 0, 2) OF
+                     '@@': fldr2 = macro_read(file_name, var2, ncdf_db, TIME_1 = time1,  TIME_2 =  time2, _extra = ex)
+                     ELSE: fldr2 = nc_read(file_nam+strmid(cmd.grid, 1, 1)+suff_domain+'.nc', var2, ncdf_db, $
+                                  TIME_1 = time1,  TIME_2 =  time2, ALL_DATA = all_data, _extra = ex)
+                  ENDCASE     
+                                ; consistency check
+                  IF fldr1.dim NE fldr2.dim THEN BEGIN
+                     print, '  *** dimension inconsistency in vector plot : ', cmd.var
+                     return, -1
+                  ENDIF 
+                ; custom stucture for vector plot
+                  fldr = {name: var1, data: fldr1.data, legend: fldr1.legend, $
+                          units:  fldr1.units, origin: fldr1.origin, dim: fldr1.dim, $
+                          name2: var2, data2: fldr2.data, legend2: fldr2.legend, $
+                          units2:  fldr2.units, origin2: fldr2.origin, dim2: fldr2.dim}
+                  IF diff_from_exp EQ 1 OR STRMID(cmd.spec, 0, 2) EQ 'd:' THEN BEGIN
+                     diff_from_exp = 0
+                     cmd.spec = '-'
+                     print, '   data_read : difference in vector plot not ready'
+                  ENDIF 
+                                ; re-organise cmd.var
+                  cmd.var = var1
+;                  cmd.grid = strmid(cmd.grid, 2, 1)
+                  cmd.var2 = var2
+              
+
+               ENDIF ELSE BEGIN  ; general case
+                  fldr = nc_read(file_name, cmd.var, ncdf_db, BOXZOOM = box_plot, $
+                                  TIME_1 = time1,  TIME_2 =  time2, ALL_DATA = all_data, _extra = ex)
+                  ;fldr = nc_read(file_name, cmd.var, ncdf_db, $
+                  ;               TIME_1 = time1,  TIME_2 =  time2, ALL_DATA = all_data, _extra = ex)              
+                  ; perform mean if hovmoeller diagram is required
+                  ; It is absolutely necessary for the division case with 
+                  ; a hovmoeller diagram (before performing the division)
+                  IF plttyp EQ 'pltt' AND div_from_exp EQ 1 THEN BEGIN
+                     mask_z, fldr.data, cmd, boite_pltt, dimplot, legz
+                     z2d = checkfield(fldr.data, plttyp, TYPE = hotyp, BOXZOOM = boite_pltt, DIREC = direc,  _extra = ex)
+                     fldr =  { name : fldr.name, data : z2d,  legend : fldr.legend,  units : fldr.units,  $
+                               origin : fldr.origin, dim : size(z2d, /N_DIMENSIONS), direc : hotyp}
+                     print,  'Averaging made before the call to SAXO plt routines !!!!'
+                  ENDIF
+; fix
+;                  idx = where(fldr.data EQ 1.00000e+20)
+;                  IF idx(0) NE -1 THEN fldr.data(idx) = 0.
+               ENDELSE 
+            END 
+         ENDCASE  
+      END  
+   ENDCASE  
+
+; Redefinition of time because it is updated in read_ncdf
+; Useful for pltt routine
+
+   IF hotyp NE '-' THEN BEGIN
+      time = timearr.scale
+   ENDIF ELSE BEGIN
+      time = time1
+   ENDELSE
+
+
+; density projection
+
+   IF splot EQ 1 THEN BEGIN
+      IF cmd.timave EQ '1y' AND 1 THEN BEGIN 
+         print,  'data_read:  Constructing annual mean from monthly means...'
+         cmd.timave = '1m'
+         year_s =  cmd.date1
+         cumulative = 0.
+         FOR i = 1, 12 DO BEGIN
+            IF i EQ 1  THEN cmd.date1 = year_s + '01'
+            IF i EQ 2  THEN cmd.date1 = year_s + '02'
+            IF i EQ 3  THEN cmd.date1 = year_s + '03'
+            IF i EQ 4  THEN cmd.date1 = year_s + '04'
+            IF i EQ 5  THEN cmd.date1 = year_s + '05'
+            IF i EQ 6  THEN cmd.date1 = year_s + '06'
+            IF i EQ 7  THEN cmd.date1 = year_s + '07'
+            IF i EQ 8  THEN cmd.date1 = year_s + '08'
+            IF i EQ 9  THEN cmd.date1 = year_s + '09'
+            IF i EQ 10 THEN cmd.date1 = year_s + '10'
+            IF i EQ 11 THEN cmd.date1 = year_s + '11'
+            IF i EQ 12 THEN cmd.date1 = year_s + '12'
+            print,  '   Date1 = ',  cmd.date1
+            sfild = fldr
+            bin_sigma, cmd, sfild, BOXZOOM = box_plot, ALL_DATA = all_data ;;;;;;;;;;;;;; prob
+            cumulative = cumulative + sfild.data
+         ENDFOR
+         fldr = sfild
+         fldr.data = cumulative/12.
+         cmd.timave = '1y'
+         cmd.date1 = year_s
+      ENDIF ELSE BEGIN
+         IF cmd.timave EQ '1m' AND strmid(cmd.plt, 0, 2) EQ 'st' AND really_1m_st EQ 1 THEN BEGIN
+            sfild = fldr
+            timedim = (size(sfild.data))[(size(sfild.data))[0]]
+            fldrd = fltarr((size(sfild.data))[1],(size(sfild.data))[2], (sig_max - sig_min)/sig_del + 1, timedim)
+            FOR i =  0, timedim-1 DO BEGIN
+               print, 'data_read: Performing monthly bining. Indices: first, last, current = 0,',  timedim-1,  i
+               sfild2 = {name: sfild.name, data: sfild.data(*, *, *, i), legend: sfild.legend, units: sfild.units, origin: sfild.origin, dim: sfild.dim-1}
+               bin_sigma, cmd, sfild2, BOXZOOM = box_plot, ALL_DATA = all_data 
+               fldrd(*, *, *, i)= sfild2.data
+            ENDFOR 
+            fldr = {name: sfild.name, data:fldrd, legend: sfild.legend, units: sfild.units, origin: sfild.origin, dim: sfild.dim}
+         ENDIF ELSE BEGIN
+            sfild = fldr
+            bin_sigma, cmd, sfild, BOXZOOM = box_plot, ALL_DATA = all_data
+            ;;bin_sigma, cmd, sfild, ALL_DATA = all_data
+            fldr = sfild
+         ENDELSE 
+      ENDELSE 
+   ENDIF 
+
+; modify data info if needed (actual data modification done in; trends.pro called by pltt.pro)
+
+   CASE plttyp OF
+      'pltt': BEGIN
+         IF run_stddev EQ 0 THEN BEGIN
+            CASE strmid(cmd.trend, 0, 1) OF
+               '1': fldr.origin = 'diff'
+               '2': fldr.origin = 'diff'
+               '3': fldr.origin = 'diff'
+               '4': fldr.origin = 'diff'
+               ELSE:
+            ENDCASE
+         ENDIF
+      END 
+      ELSE:
+   ENDCASE 
+   
+   IF n_elements(fldr.data) EQ 1 THEN return, fldr
+
+; Difference 2 cases : from cmd.exp or from cmd.spec
+
+
+   IF diff_from_exp EQ 1 THEN BEGIN 
+
+      cmd.exp = argvar[1]
+      print, '    remove : ', cmd.exp
+
+      ; read field2
+      field2 = data_read(cmd, hotyp, plttyp, dimplot, iover, ALL_DATA = all_data, _extra = ex)
+      IF n_elements(field2.data) EQ 1 THEN return, field2
+
+      ; perform difference
+      diff = fldr.data-field2.data
+      IF (where(fldr.data EQ valmask))[0] NE -1 THEN $
+       diff[where(fldr.data EQ valmask)] = valmask
+      fldr.data = diff
+      fldr.origin = 'diff'   
+      cmd.exp = exp_init
+      varexp = cmd.exp 
+
+   ENDIF ELSE IF div_from_exp EQ 1 THEN BEGIN  ; Division : 1 case
+      
+      cmd.exp = argvar[1]
+      print, '    divide by : ', cmd.exp
+
+      div =  fldr.data
+      
+      ; read field2
+      field2 = data_read(cmd, hotyp, plttyp, dimplot, iover, ALL_DATA = all_data, _extra = ex)
+      IF n_elements(field2.data) EQ 1 THEN return, field2
+
+      IF plttyp EQ 'pltt' THEN BEGIN
+         mask_z, field2.data, cmd, boite_pltt, dimplot, legz
+         z2d = checkfield(field2.data, plttyp, TYPE = hotyp, BOXZOOM = boite_pltt, DIREC = direc,  _extra = ex)
+         field2 =  { name : field2.name, data : z2d,  legend : field2.legend,  units : field2.units,  $
+                   origin : field2.origin, dim : size(z2d, /N_DIMENSIONS), direc : hotyp}
+         print,  'Averaging made before the call to SAXO plt routines !!!!'
+      ENDIF
+      
+      ; perform division
+      IF (where(field2.data EQ 0.0))[0] NE -1 THEN BEGIN
+         print,  'Be careful some data are null. They will be masked ! '
+         idx0 = where(field2.data EQ 0.0)
+         field2.data(idx0) =  valmask
+         fldr.data(idx0) =  valmask
+         div(idx0) =  valmask
+      ENDIF
+
+      idx = where(field2.data NE valmask)
+      div(idx) = fldr.data(idx) / field2.data(idx)
+
+      fldr.data = div
+      fldr.origin = 'div'   
+      cmd.exp = exp_init
+      varexp = cmd.exp 
+      
+   ENDIF ELSE BEGIN
+
+; If difference, decode second field, read and perform difference
+
+      IF STRMID(cmd.spec, 0, 2) EQ 'd:' THEN BEGIN
+         
+         cmd2 = cmd
+         cmdl = STRMID(cmd.spec, 2, strlen(cmd.spec)-2)
+         
+         print, '    remove : ', cmdl
+         
+         ; decode field2
+         argvar = strsplit(cmdl, '/', /EXTRACT)
+
+         cmd2.exp    = argvar[0]
+         cmd2.timave = argvar[1]
+         cmd2.date1  = argvar[2]
+         cmd2.spec   = '-'
+
+         IF n_elements(argvar) EQ 4 THEN cmd2.spec = argvar[3] 
+         
+         ; read field2
+         field2 = data_read(cmd2, hotyp, plttyp, dimplot, iover, ALL_DATA = all_data, _extra = ex)
+         IF n_elements(field2.data) EQ 1 THEN return, field2
+
+         ; perform difference
+         diff = fldr.data-field2.data
+         IF (where(fldr.data EQ valmask))[0] NE -1 THEN $
+          diff[where(fldr.data EQ valmask)] = valmask
+         fldr.data = diff
+         fldr.origin = 'diff'   
+         cmd.exp = cmd.exp+' - '+cmd2.exp+ ' ('+cmd2.timave+' '+cmd2.date1+')'
+         varexp = cmd.exp 
+
+      ENDIF 
+
+   ENDELSE
+
+ENDIF ELSE BEGIN
+
+   print, ''
+   print, '   Data already read (previous field)'
+   print, ''
+   
+ENDELSE
+
+; Pb with varexp which is always updated in read_ncdf
+; For Seb, varexp is the name of the file. For Eric, varexp is the name of the experiment
+varexp = cmd.exp
+
+IF debug_w THEN print, '       varexp before exit in data_read = ', varexp
+IF debug_w THEN print, '   ...EXIT data_read'
+
+return, fldr
+
+END 

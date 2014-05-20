@@ -1,0 +1,66 @@
+FUNCTION def_box, plt, dimplot, boxdef, stride
+@common
+@com_eg
+;
+; find hovmoeller box in Defaults file
+;
+   IF debug_w THEN print, '   ENTER def_box...'
+   plt_test = plt
+   IF strpos(plt, '@') GT 1 THEN BEGIN
+      plt_test = strmid(plt, 0, strpos(plt, '@'))
+   ENDIF 
+   CASE strmid(plt_test, 0, 2) OF
+      'xy': boxdef = strmid(plt_test, 3, strlen(plt_test)-3)
+      'z_': boxdef = strmid(plt_test, 2, strlen(plt_test)-2)
+      'y_': boxdef = strmid(plt_test, 2, strlen(plt_test)-2)
+      'x_': boxdef = strmid(plt_test, 2, strlen(plt_test)-2)
+      'zt': boxdef = strmid(plt_test, 3, strlen(plt_test)-3)
+      ELSE: boxdef = strmid(plt_test, dimplot+1, strlen(plt_test)-(dimplot+1))
+   ENDCASE 
+
+   force_all_data_read = 1
+
+   IF debug_w THEN print, '      boxdef stage 1 = ',boxdef
+
+   ; define box from pseudo-3Dmask
+
+   pseudo_3d_msk = ''
+
+   IF strmid(boxdef, 0, 1) EQ '#' THEN BEGIN 
+      pseudo_3d_msk = plt_test = strmid(boxdef, 1, strlen(boxdef)-1)
+      boxdef = 'global'
+
+   ENDIF 
+
+   IF boxdef NE 'global' AND boxdef NE '' THEN BEGIN 
+
+      file_b = hom_def+'domain_boxes.def'
+      
+      spawn, 'grep -i " '+boxdef+' " '+file_b, line
+      line = strcompress(strtrim(line[0], 2))
+      length = strlen(line)
+      
+      IF length EQ 0 THEN BEGIN
+         
+         print, '  *** Box ', boxdef, ' not found in file '
+         print, file_b
+         return, -1
+         
+      ENDIF ELSE BEGIN  
+         argvar = strsplit(line, ' ', /EXTRACT)
+         box = argvar[1]
+         box = float(strsplit(argvar[1], '/', /EXTRACT))
+         stride = long(argvar[2])
+      ENDELSE 
+
+   ENDIF ELSE BEGIN 
+      box = box_h
+      stride = def_stride
+   ENDELSE 
+      
+   IF debug_w THEN print, '      boxdef final = ',boxdef
+   IF debug_w THEN print, '   ...EXIT def_box'
+
+   return, box
+END 
+   

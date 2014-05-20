@@ -1,0 +1,136 @@
+;---------------------------  
+; Reading any netcdf file
+;---------------------------  
+FUNCTION nc_read, file_name, var_name, ncdf_db, BOXZOOM = boxzoom, TIME_1 = time_1,  TIME_2 =  time_2, ALL_DATA = all_data, NO_MEAN = no_mean
+
+; arguments = file_name, varname
+; ncdf_db=<location>:<path> or just <path>
+; mot clef = iodir time_1 time_2
+
+@common
+@com_eg
+  
+; inits
+   IF debug_w THEN print, '   '
+   IF debug_w THEN print, '   ENTER nc_read...'
+
+   IF NOT keyword_set(TIME_1) THEN time_1 =  1
+   IF NOT keyword_set(TIME_2) THEN time_2 =  time_1
+   IF debug_w THEN print, '  Before read_ncdf,  key_yreverse=', key_yreverse  
+;
+
+; decide which subdomain of data to read
+   IF debug_w THEN print, '     keyword_set(ALL_DATA) : ', keyword_set(ALL_DATA)
+   IF keyword_set(ALL_DATA) THEN BEGIN
+      tout = 1
+   ENDIF ELSE tout = 0
+   CASE vert_type OF
+      'z' : zindex = 0
+      'level' : zindex = 1
+      ELSE: zindex = 0
+   ENDCASE
+
+; local directory
+   IF strpos(ncdf_db, ':') GE 1 THEN directory = (strsplit(ncdf_db, ':', /EXTRACT))[1] $
+    ELSE directory = ncdf_db
+
+; Find the variable's attribute
+   ncdf_getatt, directory+file_name, var_name, add_offset = add_offset, scale_factor = scale_factor, $
+    missing_value = missing_value, units = units, calendar = calendar, long_name = long_name
+
+; By default units for the Z axis are meters
+   IF n_elements(gdept) GT 1 THEN BEGIN
+      IF name_level NE '-' THEN $
+       ncdf_getatt, directory+file_name, name_level, units = units_depth ELSE units_depth = 'm'
+   ENDIF ELSE units_depth = ''
+
+; Check consistency between time_2 computed from param in cmdline and the max number
+; of time steps found in the file.
+   jpt_max = find_jptmax(file_name, IODIRECTORY = directory)
+   IF time_2-time_1+1 GT jpt_max AND jpt_max NE -1 THEN time_2 = time_1+jpt_max-1
+
+; Read the data with a call to read_ncdf
+   IF debug_w THEN print, '     '
+   IF debug_w THEN print, '     Reading raw data from ',  file_name
+
+   lec_data = read_ncdf(var_name, time_1-1, time_2-1, BOXZOOM = boxzoom, FILENAME = directory+file_name, $
+                        /TIMESTEP, TOUT = tout, /NOSTRUCT, /CONT_NOFILL, GRID = vargrid, $
+                        ZINVAR = zinvar, ZINDEX = zindex)
+   field_dim = (size(lec_data))[0]
+   IF field_dim LE 0 THEN stop,  '  Something wrong happened in read_ncdf '
+
+   IF debug_w THEN print, '     '
+   IF debug_w AND keyword_set(boxzoom) THEN print,  '    boxzoom=', boxzoom
+   IF debug_w THEN print,  '    firstxt,firstyt,firstzt=', firstxt, firstyt, firstzt
+   IF debug_w THEN print,  '    lastxt,lastyt,lastzt=', firstxt, firstyt, firstzt   
+   IF debug_w THEN print,  '    zinvar=', zinvar
+   IF debug_w THEN print, '     jpt=', jpt
+   IF debug_w THEN print, '     key_shift=', key_shift
+   IF debug_w THEN print, '     After read_ncdf, key_yreverse=',key_yreverse 
+   IF debug_w THEN print, '     '
+   
+; Average data along vertical if needed and update some features
+; needed for plt (data_direc, name_suff)
+   name_suff = ''
+   data_direc = ''
+   update_data, TAB = lec_data, VNAME = var_name, BOXZOOM = boxzoom, ZUNITS = units_depth, $
+    ZINVAR = zinvar, SUFFIX = name_suff, D_DIREC = data_direc, $
+    TIME_1 = time_1, TIME_2 =  time_2, NO_MEAN = no_mean
+   field_dim = (size(lec_data))[0]
+
+; Field attributes
+   field = {name: '', data: lec_data, legend: '', units: '', origin: '', dim: 0, direc: data_direc}
+   field.name = var_name
+   field.origin = directory+file_name
+   field.legend = long_name+name_suff
+   field.units = units
+   field.dim = field_dim 
+
+; replace NaN with valmask
+<<<<<<< .mine
+;   idx_t = where (~finite(field.data))
+;   IF idx_t(0) NE -1 THEN field.data(idx_t) = valmask
+=======
+   idx_t = where (~finite(field.data))
+   IF idx_t[0] NE -1 THEN field.data(idx_t) = valmask
+>>>>>>> .r120
+
+; get valmask (might need valmask = float(string(valmask))
+   valmask = 1.e20
+   IF size(missing_value, /TYPE) EQ 4 OR size(missing_value, /TYPE) EQ 5 THEN BEGIN
+      valmask = missing_value
+      ; ensure valmask is positive
+      IF valmask LT 0 THEN BEGIN
+         print, '      *** Warning valmask is negative - changing sign: ', valmask
+         idx_t = where (field.data EQ valmask)
+         IF idx_t[0] NE -1 THEN field.data(idx_t) = -valmask
+         valmask = -valmask
+         idx_t=0                ; free memory
+      ENDIF
+   ENDIF
+
+   IF debug_w THEN print, '     valmask=',valmask 
+
+; if pseudo 3d mask, read mask file and set masked points to valmask
+; still to do
+
+; min/max
+
+   chardim = ' - dim = '
+   FOR i = 1, (size(field.data))[0] DO BEGIN 
+      chardim = chardim+string((size(field.data))[i], format = '(I5)')
+   ENDFOR  
+
+   idx_valmsk = (where (field.data EQ valmask))
+   idx_novalmsk = (where (field.data NE valmask))
+   minf = idx_valmsk[0] EQ -1 ? min(field.data) : min(field.data(idx_novalmsk))
+   maxf = idx_valmsk[0] EQ -1 ? max(field.data) : max(field.data(idx_novalmsk))
+
+   print, '      = ',field.legend, '    [min/max = ',minf , maxf,'  ', field.units,' - masked values = ',valmask, chardim, ']'
+
+   IF debug_w THEN print,  '  ...EXIT nc_read'
+   IF debug_w THEN print,  '  '
+   
+   return, field
+
+END 

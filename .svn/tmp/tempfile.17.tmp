@@ -1,0 +1,386 @@
+FUNCTION trends, fld, trend_int, type, silent = silent
+
+@common
+@com_eg
+
+; fld = field to work on
+; trend_int = 1,2,3,4,...9 (see cases after)
+; type = 't', 'xt', 'yt', 'zt' or 'xyt'
+
+   IF NOT keyword_set(silent) THEN print, '    Enter trends.pro'
+   
+   trend_type = strtrim(string(trend_int), 2)
+
+; select subset of time serie according to [sel1,sel2,freq]
+; =========================================================
+
+   month1 = 11
+   month2 = 12
+   sample = 0
+   field_intl = field_int
+   
+   CASE trend_type OF
+      '7': timeunit = 30/6
+      '8': timeunit = 30
+      '71': BEGIN
+         trend_type = '4'+strtrim(string(6*(month2-month1+1)), 2)
+         timeunit = 30/6
+      END
+      '81': BEGIN
+         trend_type = '4'+strtrim(string(month2-month1+1), 2)
+         timeunit = 30
+      END
+      ELSE: timeunit = 1
+   ENDCASE 
+
+   delt = 30/timeunit
+   sel1 = (month1-1)*delt
+   sel2 = (month2)*delt-1
+   freq = 360/timeunit
+
+; build indexes to keep in [0,N-1] = serie of [sel1,sel2] mod(freq)
+
+   IF (size(fld))[0] EQ 1 AND sample EQ 1 THEN BEGIN ; 1D time serie
+     IF NOT keyword_set(silent) THEN print, '     Extract months : ', month1, month2
+      Ndim = (size(fld))[1]
+      idx0 = floor(findgen(sel2-sel1+1)+sel1)
+      ndelt = n_elements(idx0) 
+      idx = idx0
+      ninter = Ndim/freq
+      FOR t = 1, ninter-1 DO BEGIN 
+         idx0 = idx0+freq
+         idx = [idx, idx0]
+      ENDFOR 
+
+      ; new array
+
+      fld = fld[idx]
+      jpt = n_elements(fld) 
+
+      ; change time accordingly
+
+      time = time[idx(0)]+(findgen(jpt)-1)*360/ndelt
+      
+   ENDIF 
+
+; normalise 1d time series if c_normal=1
+
+   IF c_normal EQ 1 AND (size(fld))[0] EQ 1 THEN BEGIN 
+      IF NOT keyword_set(silent) THEN print, '     Normalizing 1D time series with stddev = ',sqrt((moment(fld))[1]) 
+      fld = fld/sqrt((moment(fld))[1])
+   ENDIF  
+
+; modify time serie according to trend_typ
+; ========================================
+ 
+   CASE strmid(trend_type, 0, 1) OF
+      '1': BEGIN  ; trend = remove first value
+;                   ---------------------------
+         IF (size(fld))[0] EQ 1 THEN BEGIN ; 1D time serie
+            fld = fld-fld[0]
+         ENDIF ELSE BEGIN                  ; hovmoeller
+            fldrem = fld[*, 0]#replicate(1, (size(fld))[2])
+            fld = fld-fldrem
+         ENDELSE 
+      END 
+      '2': BEGIN  ; drift = remove previous value
+;                   ------------------------------
+         IF (size(fld))[0] EQ 1 THEN BEGIN ; 1D time serie
+            fldrem = shift(fld, 1)
+            fldrem[0]= fld[0]
+            fld = fld-fldrem
+         ENDIF ELSE BEGIN                  ; hovmoeller
+            fldrem = shift(fld, 0, 1)
+            fldrem[*, 0]= fld[*, 0]
+            fld = fld-fldrem
+         ENDELSE 
+      END 
+      '3': BEGIN  ; inverse trend = remove mean of <n> last values
+;                   ----------------------------------------------
+         IF strlen(trend_type) GT 1 THEN $
+          mean_n = long(strmid(trend_type, 1, strlen(trend_type)-1)) ELSE mean_n = 1
+         IF (size(fld))[0] EQ 1 THEN BEGIN ; 1D time serie
+            fld = mean(fld[(size(fld))[1]-mean_n:(size(fld))[1]-1])-fld
+         ENDIF ELSE BEGIN                  ; hovmoeller
+            fldrem = reform(fld[*, (size(fld))[2]-mean_n:(size(fld))[2]-1],(size(fld))[1],mean_n)
+            fldrem = total(fldrem, 2)/float(mean_n)#replicate(1, (size(fld))[2])
+            idx = where(fld EQ valmask)
+            fld = fldrem-fld
+            IF idx(0) NE -1 THEN fld(idx) = valmask
+         ENDELSE 
+      END 
+      '4': BEGIN  ; anomaly = remove average running mean
+;                   -------------------------------------
+         IF strlen(trend_type) GT 1 THEN $
+          running = long(strmid(trend_type, 1, strlen(trend_type)-1)) ELSE running = 1
+
+         IF (size(fld))[0] EQ 1 THEN BEGIN ; 1D time serie
+            ; build array to remove from time serie
+            IF running GE 2 THEN BEGIN
+               lenght = (size(fld))[1]
+               fldrem =  fltarr(running)
+               FOR t = 0, running-1 DO BEGIN
+                  fldrem(t) = mean(fld(long(findgen(lenght/running)*running+t)))
+               ENDFOR
+               IF fld_flag EQ 1 THEN BEGIN
+                  fldrem_t1 = fldrem
+               ENDIF 
+               IF fld_flag EQ 2 THEN fldrem_t2 = fldrem
+               fldrem = reform(fldrem#replicate(1, long(lenght/running)), lenght)
+
+               ; Compute mean error-bar using running bootstrap window (width = 10 months) 
+               temperr = stat_error(fld, 10L, /mean, niter = 999)
+               err_std = sqrt( total( (temperr-mean(fld))^2 )/n_elements(temperr) )
+               
+               IF NOT keyword_set(silent) THEN print, '     1D times-serie info         : mean +- err ', (moment(fld))[0], err_std
+
+               ; Compute std error-bar using running bootstrap window (width in plt_def)
+               IF jpt GT boot_win(0) THEN BEGIN 
+                  temperr = stat_error(fld, boot_win(0))
+                  err_std_1 = sqrt( total((temperr-sqrt((moment(fld))[1]) )^2)/n_elements(temperr) )
+               ENDIF ELSE err_std_1 = 0
+               IF jpt GT boot_win(1) THEN BEGIN 
+                  temperr = stat_error(fld, boot_win(1))
+                  err_std_2 = sqrt( total((temperr-sqrt((moment(fld))[1]) )^2)/n_elements(temperr) )
+               ENDIF  ELSE err_std_2 = 0
+               IF jpt GT boot_win(2) THEN BEGIN 
+                  temperr = stat_error(fld, boot_win(2))
+                  err_std_3 = sqrt( total((temperr-sqrt((moment(fld))[1]) )^2)/n_elements(temperr) )
+               ENDIF  ELSE err_std_3 = 0
+               
+               IF NOT keyword_set(silent) THEN print, '     1D times-serie anomaly info : var/stddev +- error (24,36,48)', (moment(fld))[1], sqrt((moment(fld))[1]), err_std_1, err_std_2, err_std_3 
+               IF NOT keyword_set(silent) THEN print, ' '
+            ENDIF ELSE fldrem =  mean(fld)
+            
+            idx = where(fld EQ valmask)
+            fld = fld - fldrem
+            ; keep mean seasonal cycle in common
+            mean_sc = fldrem
+
+            IF idx(0) NE -1 THEN BEGIN 
+               fld(idx) = valmask
+            ENDIF 
+
+; compute time lag correlation
+            IF ioverchk EQ 2 AND c_correl EQ 1 THEN BEGIN
+               IF (size(fld))(1) EQ (size(fld_prev_t))(1) THEN BEGIN 
+                  lag_array = findgen(2*lag_correl+1)-lag_correl
+                  lag_correlation = C_CORRELATE(fld, fld_prev_t, lag_array)
+                  print, '     1D time series lag correlation = ', lag_correlation
+                  indx = where (lag_correlation EQ max(lag_correlation))
+                  IF indx[0] NE -1 THEN BEGIN 
+                     print, '        Lag of max correlation =', lag_array(indx),lag_correlation(indx) 
+                     print, '        Lag correlation limit [-N,N] =', lag_correl 
+                  ENDIF 
+               ENDIF 
+            ENDIF 
+
+;
+; apply running mean stdev
+;
+            IF run_stddev GT 0 THEN BEGIN 
+               print, '     Compute running std dev, window = ',run_stddev 
+               print, ' '
+               full = 0
+               nyears = lenght/running
+               bootfoo = run_stddev/running
+               stat = spectra(fld, nyears, tukey, run_stddev/running, full, bootfoo)
+               stdarr = fld
+               stdarr[*] = !VALUES.F_NAN
+               size_data = (size(stat.run_std))[1]
+               stdarr[run_stddev/2:(run_stddev/2)+size_data-1]= stat.run_std
+               fld = stdarr 
+            ENDIF 
+
+            fld_prev_t = fld
+
+         ENDIF ELSE BEGIN                  ; hovmoeller
+            ; build array to remove from time serie
+            IF debug_w THEN print, '  anomaly = remove average running mean (hovmoeller)'
+            CASE type OF
+               'xt': BEGIN
+                  nx = (size(fld))[1]
+                  lenght = (size(fld))[2]
+                  fldrem = reform(fld, nx, running, lenght/running)
+                  fldrem = total(fldrem, 3)/(lenght/running)
+                  fldrem = fldrem[*]
+                  fldrem = reform(fldrem#replicate(1, long(lenght/running)),nx, lenght)
+               END 
+               'yt': BEGIN
+                  ny = (size(fld))[1]
+                  lenght = (size(fld))[2]
+                  fldrem = reform(fld, ny, running, lenght/running)
+                  fldrem = total(fldrem, 3)/(lenght/running)
+                  fldrem = fldrem[*]
+                  fldrem = reform(fldrem#replicate(1, long(lenght/running)),ny, lenght)
+               END 
+               'zt': BEGIN
+                  nz = (size(fld))[1]
+                  lenght = (size(fld))[2]
+                  fldrem = reform(fld, nz, running, lenght/running)
+                  fldrem = total(fldrem, 3)/(lenght/running)
+                  fldrem = fldrem[*]
+                  fldrem = reform(fldrem#replicate(1, long(lenght/running)),nz, lenght)
+               END 
+               'xyt': BEGIN
+                  nx = (size(fld))[1]
+                  ny = (size(fld))[2]
+                  lenght = (size(fld))[3]
+                  fldrem = reform(fld, nx*ny, running, lenght/running)
+                  fldrem = total(fldrem, 3)/(lenght/running)
+                  fldrem = fldrem[*]
+                  fldrem = reform(fldrem#replicate(1, long(lenght/running)),nx*ny, lenght)
+                  fldrem = reform(fldrem, nx, ny, lenght)
+               END   
+               ELSE: stop,  'The type '+type+' is not handled in trends to build the seasonal cycle fldrem. Please change your cmd.plt'
+            ENDCASE
+
+;            print, min(fld[where(fld le valmask/10)]), max(fld[where(fld le valmask/10)])
+;            print, min(fldrem[where(fldrem le valmask/10)]), max(fldrem[where(fldrem le valmask/10)])
+             idx = where(fld EQ valmask)
+             fld = fld - fldrem
+             ; keep mean seasonal cycle in common
+             mean_sc = fldrem
+             IF idx(0) NE -1 THEN fld(idx) = valmask
+;            print, min(fld[where(fld le valmask/10)]), max(fld[where(fld le valmask/10)])
+         ENDELSE  
+
+      END 
+      '5': BEGIN  ; Apply digital filter 
+;                   --------------------
+         IF strlen(trend_type) EQ 1 THEN BEGIN
+            print, '   *** specify filter width as <time_int>_<lower>_<upper>'
+            return, -1
+         ENDIF 
+         IF (size(fld))[0] EQ 1 THEN BEGIN ; 1D time serie
+            print, '     1D times-serie info         : mean ', (moment(fld))[0]
+            print, '     1D times-serie anomaly info : var/stddev ', (moment(fld))[1], sqrt((moment(fld))[1]) 
+            print, ' '
+            print, '   *** filter on 1D data not ready'
+
+         ENDIF ELSE BEGIN 
+            print, '   *** filter on 2D data not ready'
+            return, -1
+         ENDELSE 
+            
+;   filter = digital_filter(0.15, 0.66666, 50, 15)
+;                           fraction of niquisk freq (upper, lower
+;                           limit indays))
+;   output_1d = convol(input_1d, filter)
+      END 
+      '6': field_intl = 1; time integral done after
+      ELSE:
+   ENDCASE  
+
+; compute field time integral if required
+   IF n_elements(field_int) EQ 0 THEN field_int = 0
+   IF field_intl EQ 1 THEN BEGIN
+      ; running integral ?
+      IF strlen(trend_type) GT 1 THEN $
+       int_win = long(strmid(trend_type, 1, strlen(trend_type)-1)) ELSE int_win = 0
+      CASE (size(fld))[0] OF
+         1: BEGIN
+            print,  '     -> compute 1D data field time integral / lenght = ', strtrim(string(int_win), 2)
+            fldint = fld
+            lenght = (size(fld))[1]
+            IF int_win EQ 0 THEN BEGIN  ; integral from start
+               FOR t = 0, lenght-1 DO BEGIN
+                  fldint(t) = total(fld[0:t])
+               ENDFOR 
+            ENDIF ELSE BEGIN ; running integral
+               FOR t = 0, int_win-1 DO BEGIN
+                  fldint(t) = total(fld[0:t])
+               ENDFOR 
+               FOR t = int_win,lenght-1 DO BEGIN
+                  fldint(t) = total(fld[t-int_win+1:t])
+               ENDFOR 
+            ENDELSE 
+            fld = fldint
+         END  
+         2: BEGIN
+            print,  '     -> compute 2D data field time integral / lenght = ', strtrim(string(int_win), 2)
+            CASE type OF 
+               'yt': BEGIN
+                  ny = (size(fld))[1]
+                  lenght = (size(fld))[2]
+                  FOR i = 0, ny-1 DO BEGIN 
+                     zwrk = fld(i, *)
+                     zint = zwrk
+                     IF int_win EQ 0 THEN BEGIN ; integral from start
+                        FOR t = 0, lenght-1 DO BEGIN
+                           zint(t) = total(zwrk[0:t])
+                        ENDFOR 
+                     ENDIF ELSE BEGIN ; running integral
+                        FOR t = 0, int_win-1 DO BEGIN
+                           zint(t) = total(zwrk[0:t])
+                        ENDFOR 
+                        FOR t = int_win,lenght-1 DO BEGIN
+                           zint(t) = total(zwrk[t-int_win+1:t])
+                        ENDFOR 
+                     ENDELSE 
+                     fld(i, *) = zint
+                  ENDFOR 
+               END
+               'xt': BEGIN
+                  nx = (size(fld))[1]
+                  lenght = (size(fld))[2]
+                  FOR i = 0, nx-1 DO BEGIN 
+                     zwrk = fld(i, *)
+                     zint = zwrk
+                     IF int_win EQ 0 THEN BEGIN ; integral from start
+                        FOR t = 0, lenght-1 DO BEGIN
+                           zint(t) = total(zwrk[0:t])
+                        ENDFOR 
+                     ENDIF ELSE BEGIN ; running integral
+                        FOR t = 0, int_win-1 DO BEGIN
+                           zint(t) = total(zwrk[0:t])
+                        ENDFOR 
+                        FOR t = int_win,lenght-1 DO BEGIN
+                           zint(t) = total(zwrk[t-int_win+1:t])
+                        ENDFOR 
+                     ENDELSE 
+                     fld(i, *) = zint
+                  ENDFOR 
+               END
+               ELSE: BEGIN 
+                  print,  '     -> 2D data field type ', type, ' not ready'
+               END 
+            ENDCASE 
+         END
+      ENDCASE 
+   ENDIF 
+
+; if write_data then write to ascii/cdf file
+
+   IF n_elements(write_data) EQ 0 THEN write_data = 0
+   IF write_data NE 0 THEN BEGIN 
+      IF write_data GE 1 THEN BEGIN ; ascii
+         scale = 1.
+         get_lun, nuldat
+         filename = cmd_wrk.exp+'_'+cmd_wrk.date1+'_'+cmd_wrk.spec+'_'+cmd_wrk.plt+'.asc'
+         openw, nuldat, asciidir+filename
+         print,  '     -> writing 1D data to ',  asciidir+filename
+         print,  ' '
+         printf, nuldat, fld*scale, format = '(f8.4)'
+         free_lun, nuldat
+         close, nuldat
+      ENDIF ELSE BEGIN          ; netCDF (tcdf case)  
+         flddesc = field
+         flddesc.data = fld
+         cdf_description = nc_build(cmd_wrk, flddesc, type, vargrid) 
+         ;;fldcdf = {data:fld, units:field.units, short_name:cmd_wrk.var, long_name:field.legend+' ('+legbox+')', missing_value:valmask, direc:type}
+         fldcdf = {data:fld, units:field.units, short_name:field.legend+'_'+legbox, long_name:field.legend+' ('+legbox+')', missing_value:valmask, direc:type}
+         file_out = cmd_wrk.var+'_'+strtrim(string(FORMAT = '(I2.2)', ABS(write_data)), 2)+'.nc'
+         pltcmd ='nc_put, fldcdf, file_out, ncdf_db = hom_idl'+cdf_description 
+         printf, nulhis, strcompress(pltcmd)
+         res = execute(pltcmd)
+      ENDELSE
+   ENDIF 
+   
+   IF debug_w THEN print, '   Vargrid : ',  vargrid
+   IF debug_w THEN print, '   Leaving trends.pro'
+
+   return, fld
+
+END  
+      

@@ -1,0 +1,132 @@
+PRO search_time_file, cmd, ncdf_db, suffix, date1, date2, delta_t1, timavef
+
+; look for time serie file with date min =< cmd.date1 and date max => cmd.spec
+; output : data file date1 and date2
+@common
+@com_eg
+
+   timavef = cmd.timave
+   date1 = cmd.date1
+   date2 = cmd.spec
+
+   found = 1
+   delta_t1 = 0
+   suff_var = ''
+
+   CASE cmd.timave OF
+      '1mm': meanm = 'yes'
+      '3mm': meanm = 'yes'
+      ELSE: meanm = 'no'
+   ENDCASE
+
+   CASE meanm OF
+
+      'no': BEGIN
+
+         file_name_root = cmd.exp+'_'+cmd.timave+'_'
+
+         ; local or remote DB
+         machine = (str_sep(ncdf_db, ':'))[0]
+         CASE machine OF
+            'local': BEGIN
+                                ; field name added (1 variable)
+               variab = '_'+cmd.var
+;               spawn, 'ls '+(str_sep(ncdf_db, ':'))[1]+file_name_root+'*'+suffix+variab+'.nc', line
+                                ; global name (all variables)
+;               spawn, 'dir '+(str_sep(ncdf_db,
+;               ':'))[1]+file_name_root+'*'+suffix+'.nc', line2
+;               print, 'ls
+;               '+(str_sep(ncdf_db,':'))[1]+file_name_root+'*'+suffix+'.nc'
+               print, '    Looking for '+(str_sep(ncdf_db, ':'))[1]+file_name_root+'*'+suffix+'.nc ...'
+               spawn, 'ls '+(str_sep(ncdf_db, ':'))[1]+file_name_root+'*'+suffix+'.nc', line2
+;               line = [line, line2]
+               line = line2
+            END
+            ELSE: BEGIN
+               spawn, 'grep -i " '+machine+' " '+hom_def+'remote/remote.def', rem_line
+               nrem = n_elements(rem_line)
+               IF nrem EQ 1 THEN BEGIN
+                  rem_line = strcompress(strtrim(rem_line[0], 2))
+                  argvar = str_sep(rem_line, ' ')
+                  remote_name = argvar[1]
+                  remote_login = argvar[2]
+                  print, '    rsh '+remote_login+'@'+remote_name+' ls '+$
+                   (str_sep(ncdf_db, ':'))[1]+file_name_root+'*'+suffix+'.nc'
+                  print, ''
+                  spawn, 'rsh '+remote_login+'@'+remote_name+' ls '+$
+                   (str_sep(ncdf_db, ':'))[1]+file_name_root+'*'+suffix+'.nc', line
+               ENDIF ELSE print, ' *** search_file : '+machine+' unknown in config/remote'
+            END
+         ENDCASE
+
+         nfiles = n_elements(line)
+
+         print, '     -> ', strtrim(string(nfiles), 2), ' file(s) found for date1 '+date1+' and date2 '+date2+':'
+         print, '      ', line
+         print, ' '
+
+         il = 0
+         found = 0
+         delta_1 = 0L
+         WHILE il LE nfiles-1 AND found EQ 0 DO BEGIN
+            file = line[il]
+            ; remove root directory if exists
+            IF strpos(file, '/') NE -1 THEN BEGIN
+               argvar = str_sep(file, '/')
+               n = n_elements(argvar)
+               file = argvar[n-1]
+            ENDIF ELSE BEGIN 
+               print, '  *** File missing or'
+               print, '  *** Wrong definition for database: ', file
+               stop
+            ENDELSE  
+            argvar = str_sep(file, '_')
+            dat1 = argvar(2)
+            dat2 = argvar(3)
+
+;    print, dat1,' ', date1,' ', dat2,' ', date2
+
+            IF strpos(dat1, '_') EQ -1 AND strpos(dat2, '_') EQ -1 AND $
+             strpos(dat1, '-') EQ -1 AND strpos(dat2, '-') EQ -1 THEN BEGIN
+               IF (long(dat1) LE long(date1) AND long(dat2) GE long(date2))  THEN BEGIN
+                  found = 1
+                  delta_t2 = compute_time(cmd.timave, dat1, date1)
+                  delta_t1 = delta_t2.count-1
+;     print, delta_t1
+                  date1 = dat1
+                  date2 = dat2
+                  var_file = strpos(file, cmd.var)
+               ENDIF ELSE stop,  'The second date in the name of the file should be higher than the first one in terms of absolute numbers... EXIT search_time_file '
+            ENDIF ELSE BEGIN
+               found = 1
+               nfiles = 1
+               delta_t1 = 0
+            ENDELSE
+
+            il = il+1
+         ENDWHILE
+
+      END
+      'yes': BEGIN
+         CASE strmid(cmd.timave, strlen(cmd.timave)-2, 1) OF
+            'm': BEGIN          ; mean month case
+               nmonths = long(strmid(cmd.timave, 0,strlen(cmd.timave)-2))
+               date1 = '01'
+               ndate = string(long(12/nmonths), format = '(I2.2)')
+               date2 = ndate+'_'+strmid(cmd.date1, 3, strlen(cmd.date1)-3)
+               timavef = strmid(cmd.timave, 0,strlen(cmd.timave)-2)+'mm'
+            END
+            ELSE:
+         ENDCASE
+         delta_t1 = 0
+         nfiles = 1
+         found = 1
+      END
+      ELSE:
+   ENDCASE
+
+;   print, date1, date2, delta_t1
+
+   IF nfiles EQ 0 OR found EQ 0 THEN BEGIN & date1 = '???' & date2 = '???' & END
+
+END

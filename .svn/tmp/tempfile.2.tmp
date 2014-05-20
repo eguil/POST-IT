@@ -1,0 +1,86 @@
+;-----------------------------------------------
+; Define field plot attributes min/max/int/mult
+; EG 25/2/99
+;-----------------------------------------------
+FUNCTION fld_pltint,  var_name, plttyp, dimplot, hotyp
+
+@common
+@com_eg
+
+; arguments var_name = variable name, 
+;           plttyp   = plot type
+;           dimplot  = dimension of plot (1,2)
+; outputs structure
+; define variable plot attributes (contour intervals)
+
+   fldintr = {name:'', int: 0.0, mult: 0.0, add: 0.0,  unit: '', mid: 0.0}
+
+; name of defaults files
+
+   CASE plttyp of
+      'plt': file_iso = 'fld_glo_iso.def'
+      'pltz': file_iso = 'fld_glo_iso.def'
+      'pltt': file_iso = 'fld_glo_iso.def'
+      ELSE: file_iso = 'fld_glo_iso.def'
+   ENDCASE 
+   IF field.origin EQ 'diff' THEN file_iso = 'fld_zoo_iso.def'
+
+   IF debug_w THEN print, ' field.origin in fld_pltint: ', field.origin
+
+   print,' '
+   print,'    Reading iso/mult of ',var_name,' from : ', file_iso
+   
+   spawn, 'grep -i "\ '+var_name+' " '+hom_def+file_iso, line
+   line = strcompress(strtrim(line[0], 2))
+   length = strlen(line)
+
+   IF length EQ 0 THEN BEGIN
+      
+      print, '    *** field_pltint : no iso/mult for field ', var_name, $
+       ' in file ', file_iso
+      fldintr.int = !VALUES.F_NAN
+      fldintr.mult = 1.0
+      fldintr.add = 0.0
+      fldintr.unit = ''
+      fldintr.mid = 0.0
+      
+   ENDIF ELSE BEGIN 
+      argvar = str_sep(line, ' ')
+      IF strmid(argvar[1], 0, 1) EQ '@' THEN BEGIN
+                                ; get info from other variable
+         friend_name = strmid(argvar[1], 1, strlen(argvar[1])-1)
+         print, '      -> linked to ', friend_name
+         fldintr = fld_pltint(friend_name, plttyp, dimplot, hotyp)
+      ENDIF ELSE BEGIN 
+         fldintr.int = float(argvar[3])
+                                ; separation for iso =0 if difference
+                                ; plot
+         CASE field.origin OF
+            'diff': BEGIN
+               fldintr.mid = 0.
+               fldatt.max = fldatt.dmax
+               fldatt.min = -fldatt.dmax
+               fldatt.homax = fldatt.max
+               fldatt.homin = fldatt.min 
+               fldatt.max1d = fldatt.max
+               fldatt.min1d = fldatt.min
+            END 
+            ELSE: fldintr.mid = float(argvar[5])
+         ENDCASE 
+         IF size(argvar, /N_ELEMENTS) eq 8 OR field.origin EQ 'div' THEN BEGIN ; OR field.origin EQ 'diff'
+            fldintr.mult = 1.0
+            fldintr.add = 0.0
+            fldintr.unit = ''
+         ENDIF ELSE BEGIN  
+            fldintr.mult = float(argvar[8])
+            fldintr.add = float(argvar[9])
+            fldintr.unit = argvar[10]
+         ENDELSE 
+         tempvar = SIZE(TEMPORARY(argvar))
+      ENDELSE 
+   ENDELSE 
+      
+   fldintr.name = var_name
+
+   return, fldintr
+END 
