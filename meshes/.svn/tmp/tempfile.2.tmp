@@ -1,0 +1,135 @@
+PRO mesh_from_file, model, file_name, ncdf_db, var_name, ALL_DATA = all_data
+@common
+@com_eg
+;
+; init grid, sf from file_name
+; masks made in data_read
+;
+   IF debug_w THEN print, '  ENTER mesh_from_file...'
+   IF debug_w AND keyword_set(all_data)  THEN print, '        All_data = ', all_data 
+
+   IF strpos(ncdf_db, ':') GE 1 THEN directory = (strsplit(ncdf_db, ':', /EXTRACT))[1] $
+    ELSE directory = ncdf_db
+
+   s_file = directory+file_name
+
+   print,'    Model inits for ', model, ' from file: ', s_file
+
+;   sm_file = hom_idl+'grids/grids_'+model+'.nc' 
+;   res = find(sm_file)
+   varexpp = varexp
+<<<<<<< .mine
+   IF res NE 'NOT FOUND' THEN BEGIN 
+
+      IF keyword_set(ALL_DATA) THEN BEGIN 
+         initncdf, s_file, GLAMBOUNDARY = glamboundary_box, PLAIN = 1
+      ENDIF ELSE initncdf, s_file, GLAMBOUNDARY = glamboundary_box
+
+      print, '    Found mask from ',sm_file 
+
+      tmask = byte(read_ncdf('sftlf', 0, 0, /timestep, file = sm_file, /nostruct))
+      
+      idx = where(tmask EQ valmask)
+
+      IF idx(0) NE -1 THEN tmask(idx) = 0.
+      idx =  where(tmask LE 50.)
+      tmask(idx) = 0.
+      tmask =  tmask < 1
+      tmask =  1-tmask
+      triangles=triangule()
+
+   ENDIF ELSE BEGIN 
+=======
+;   IF res NE 'NOT FOUND' THEN BEGIN 
+;
+;      initncdf, s_file, GLAMBOUNDARY = glamboundary_box
+;
+;      print, '    Found mask from ',sm_file 
+;
+;      tmask = byte(read_ncdf('sftlf', 0, 0, /timestep, file = sm_file, /nostruct))
+;      
+;      idx = where(tmask EQ valmask)
+;
+;      IF idx(0) NE -1 THEN tmask(idx) = 0.
+;      idx =  where(tmask LE 50.)
+;      tmask(idx) = 0.
+;      tmask =  tmask < 1
+;      tmask =  1-tmask
+;      triangles=triangule()
+;
+;   ENDIF ELSE BEGIN 
+>>>>>>> .r90
+      CASE var_name OF
+         '@@voenergy': BEGIN 
+            CASE cmd1_back.grid OF
+               'T': var_local = 'votemper'
+               'T05': var_local = 'votemper'
+               'T05#': var_local = 'votemper'
+               ELSE: var_local = 'so'
+            ENDCASE 
+            END 
+         ELSE: var_local = var_read_grd_file
+      ENDCASE 
+      IF strpos(var_local, '=f(next)') NE -1 THEN BEGIN
+         idx = strpos(var_local, '=f(')
+         var_local = strmid(var_local, 0, idx)
+      ENDIF 
+
+      IF debug_w THEN print, '   var_local = ', var_local
+
+      ; find valmask
+      cdfidl=ncdf_open(s_file) 
+      contient=ncdf_inquire(cdfidl)
+      varidl = ncdf_varid(cdfidl, var_local)
+      varcontient=ncdf_varinq(cdfidl, var_local)
+      valmask = 1.e20
+      FOR i = 0, varcontient.natts-1 DO BEGIN
+         att_txt = ncdf_attname(cdfidl, varidl, i)
+         IF att_txt EQ 'missing_value' OR att_txt EQ 'mask value' OR att_txt EQ '_FillValue' THEN BEGIN 
+            ncdf_attget, cdfidl, varidl, att_txt, valmask
+            IF debug_w THEN print, '     valmask found = ',valmask, ' in attribute ', att_txt
+         ENDIF 
+      ENDFOR 
+      ncdf_close, cdfidl
+      ; build grid
+      CASE mesh_type of
+<<<<<<< .mine
+         'atm':  BEGIN 
+            IF keyword_set(ALL_DATA) THEN BEGIN 
+               initncdf, s_file, GLAMBOUNDARY = glamboundary_box, ZAXISNAME = name_level, PLAIN = 1
+            ENDIF ELSE initncdf, s_file, GLAMBOUNDARY = glamboundary_box, ZAXISNAME = name_level 
+         END 
+         ELSE: BEGIN 
+            IF keyword_set(ALL_DATA) THEN BEGIN 
+               initncdf, s_file, USEASMASK = var_local, missing_value = valmask, GLAMBOUNDARY = glamboundary_box, ZAXISNAME = 'depth', PLAIN = 1
+            ENDIF ELSE initncdf, s_file, USEASMASK = var_local, missing_value = valmask, GLAMBOUNDARY = glamboundary_box, ZAXISNAME = 'depth'
+         END 
+=======
+         'atm': BEGIN
+            ;;initncdf, s_file, USEASMASK = var_local, missing_value = valmask, GLAMBOUNDARY = glamboundary_box, ZAXISNAME = name_level
+            initncdf, s_file, GLAMBOUNDARY = glamboundary_box, ZAXISNAME = name_level
+         END
+         ELSE: initncdf, s_file, USEASMASK = var_local, missing_value = valmask, GLAMBOUNDARY = glamboundary_box, ZAXISNAME = 'depth'
+>>>>>>> .r90
+      ENDCASE 
+      IF debug_w THEN print,  '     Grid info after initncdf :'
+      IF debug_w THEN print,  '     glamt :', size(glamt)
+      IF debug_w THEN print,  '     gphit :', size(gphit)
+      IF debug_w THEN print,  '     gdept :', size(gdept)
+      
+;   ENDELSE 
+
+   varexp = varexpp
+
+   key_offset = [0, 0, 0]
+;
+; indice i pour grille j moyenne zonale
+;
+   diaznl_idx = 1
+   IF debug_w THEN print, '     model, vargrid, varexp at exit = ',model, ' ', vargrid,' ',  varexp
+   IF debug_w THEN print, '  ...EXIT mesh_from_file'
+   IF debug_w THEN print, '  '
+
+  return
+END 
+
