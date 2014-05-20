@@ -548,11 +548,6 @@ IF read EQ 1 THEN BEGIN
    @ensbl_data_extract
 
 ; density projection
-   IF cmd.grid EQ "grden" THEN BEGIN 
-      bin_read = 1 
-   ENDIF ELSE BEGIN 
-      bin_read = 0 
-   ENDELSE   
 
    IF splot EQ 1 THEN BEGIN
       
