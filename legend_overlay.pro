@@ -154,9 +154,9 @@ IF txt_format NE 'N' THEN BEGIN
 ; special case of plt1d,'z'
 
    IF plttyp EQ 'plt1d' AND plt1dtyp EQ 'z' THEN BEGIN
-      ymin = boite_plt1d(4)
-      ymax = boite_plt1d(5)
-      y_dim = boite_plt1d(5)-boite_plt1d(4)
+      ymin = boite_plt1d[4]
+      ymax = boite_plt1d[5]
+      y_dim = boite_plt1d[5]-boite_plt1d[4]
       delta = y_dim/(float(n_leg_max)+2.)
       IF strmid(leg_pos, 0, 1) EQ 'L' THEN BEGIN
                                 ; (L)ower

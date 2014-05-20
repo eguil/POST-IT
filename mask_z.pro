@@ -177,7 +177,6 @@ PRO mask_z, fld, cmd, boite_pltz, dimplot, legz
 
    CASE mesh_type OF
       'oce': BEGIN
-
          IF splot EQ 1 THEN BEGIN
           vertical_domain = [sig_min, sig_max]
          ENDIF ELSE BEGIN
@@ -207,9 +206,9 @@ PRO mask_z, fld, cmd, boite_pltz, dimplot, legz
                     boite_pltz = [zbox, vertical_domain]
                    ENDIF
                 ENDIF
-;               IF dimplot EQ 1 THEN BEGIN
-;                boite_pltz = box_h
-;               ENDIF
+                IF dimplot EQ 1 AND splot EQ 1 THEN BEGIN
+                   boite_pltz = [zbox, vertical_domain]
+                ENDIF
 ;               IF dimplot EQ 2 THEN BEGIN
 ;                boite_pltz = [box_h,vertical_domain]
 ;               ENDIF
@@ -262,7 +261,6 @@ PRO mask_z, fld, cmd, boite_pltz, dimplot, legz
                   CASE char OF
                      '#': BEGIN
                                 ; bathymetry mask for data
-                        stop
                         bat_name = strmid(cmd.plt, ideb, strlen(cmd.plt)-ideb)
                         full_name = grep('ls -al '+hom_idl+'grids | grep orca.'+bat_name+' | awk ''NR == 1 {print $0}''', ' ', 8)
                         full_name = strmid(full_name, 5, 50)

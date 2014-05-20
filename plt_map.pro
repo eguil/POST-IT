@@ -208,6 +208,12 @@ PRO plt_map, cmd, iplot, win, iover, landscape
       dimplot = 1
    ENDIF
 
+   IF cmd.grid EQ "@grden" THEN BEGIN 
+      bin_read = 1 ; read already bined file
+   ENDIF ELSE BEGIN 
+      bin_read = 0 
+   ENDELSE   
+
 ; vector plot
 
    IF strpos(cmd.var, '[') EQ 0 THEN BEGIN
@@ -337,7 +343,8 @@ PRO plt_map, cmd, iplot, win, iover, landscape
 ; ===========
 
    really_1m_st = 1
-   IF cmd.timave EQ '1y' AND strmid(cmd.plt, 0, 2) EQ 'st' THEN BEGIN
+
+   IF cmd.timave EQ '1y' AND strmid(cmd.plt, 0, 2) EQ 'st' AND bin_read EQ 0 THEN BEGIN
       @densit_pltmap_read
    ENDIF ELSE BEGIN
       pltcmd = 'field = data_read(cmd,'''+hotyp+''','''+plttyp+''','+string(dimplot)+','+string(iover)+all_data_str+', ZMTYP = '''+cmd.plt+''')'
